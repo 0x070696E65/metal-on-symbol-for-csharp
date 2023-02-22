@@ -60,11 +60,7 @@ var batches = symbolService.BuildSignedAggregateCompleteTxBatches(
 );
 
 // 手数料確認
-ulong totalFee = 0;
-foreach (var batch in batches)
-{
-        totalFee += batch.Fee.Value; ;
-}
+var totalFee = batches.Select(batch => (long)batch.Fee.Value).Sum();
 Console.WriteLine($"Total Fee: {totalFee}");
 
 // アナウンス
