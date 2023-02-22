@@ -1,19 +1,21 @@
 # Metal on Symbol for Csharp
 
-## なにこれ？
+## Metal ってなに?
 Metal（メタル）とは Symbol ブロックチェーンに、任意の（サイズの）データを書き込んだり読み込んだりするためのプロトコルです。 簡単に言えば、Symbol ブロックチェーンをオンラインの不揮発性メモリ（ROM）として使用できます。
 <br>
 <a href="https://github.com/OPENSPHERE-Inc/metal-on-symbol" target="_blank">詳しくはこちら</a>
 <br><br>
 自分のために作ったのでドキュメントはいずれちゃんと書きます。もし使いたい方がいればテストネットで試してから使ってください。
-以下を読んでもらって理解したのちに活用してください。<br>
+以下（Metal on Symbol）を読んでもらって理解したのちに活用してください。<br>
 <a href="https://github.com/OPENSPHERE-Inc/metal-on-symbol" target="_blank">詳しくはこちら</a>
 
 ## Requirement
+- <a href="https://github.com/0x070696E65/metal-on-symbol-for-csharp/releases" target="_blank">Metal on Symbol for C#</a>
+  <br>https://github.com/0x070696E65/metal-on-symbol-for-csharp/releases
 - symbol csharp sdk
 - bouncy castle
-両方ここにあります
-https://github.com/0x070696E65/symbol_cs_dual_sdk/releases
+<br>両方ここにあります
+<br>https://github.com/0x070696E65/symbol_cs_dual_sdk/releases
 
 ## Usage
 ### Forge
@@ -35,7 +37,7 @@ var metalService = new MetalService(symbolService);
 var alicePrivateKey = new PrivateKey("SOURCE_PRIVATE_KEY");
 var aliceKeyPair = new KeyPair(alicePrivateKey);
 
-var bobPrivateKey = new PrivateKey("TARGWT_PRIVATE_KEY");
+var bobPrivateKey = new PrivateKey("TARGET_PRIVATE_KEY");
 var bobKeyPair = new KeyPair(bobPrivateKey);
 
 // トランザクション構築
