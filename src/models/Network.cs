@@ -10,11 +10,10 @@ public class Network
     public TransactionFees? TransactionFees;
     public SymbolFacade Facade;
 
-    public Network(CatSdk.Symbol.Network _networkType, TransactionFees _transactionFees)
+    public Network(CatSdk.Symbol.Network _networkType)
     {
         NetworkType = _networkType;
         NetworkTypeForTx = _networkType == CatSdk.Symbol.Network.MainNet ? CatSdk.Symbol.NetworkType.MAINNET : CatSdk.Symbol.NetworkType.TESTNET;
-        TransactionFees = _transactionFees;
         Facade = new SymbolFacade(NetworkType);
     }
 }

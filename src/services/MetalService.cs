@@ -259,9 +259,9 @@ public class MetalService
 
             var (value, key) = PackChunkBytes(magic, VERSION, additive, nextKey, chunkBytes);
 
-            if (keys.Contains(key.ToString("X")))
+            if (keys.Contains(key.ToString("X16")))
             {
-                Console.WriteLine($"Warning: Scoped key \"{key.ToString("X")}\" has been conflicted. Trying another additive.");
+                Console.WriteLine($"Warning: Scoped key \"{key.ToString("X16")}\" has been conflicted. Trying another additive.");
                 // Retry with another additive via recursive call
                 return await CreateForgeTxs(
                     sourcePubKey,
@@ -272,7 +272,7 @@ public class MetalService
             }
 
             // Only non on-chain data to be announced.
-            if (!lookupTable.ContainsKey(key.ToString("X")))
+            if (!lookupTable.ContainsKey(key.ToString("X16")))
             {
                 txs.Add(SymbolService.CreateMetadataTx(
                     sourcePubKey,
@@ -282,7 +282,7 @@ public class MetalService
                     (ushort)value.Length));
             }
 
-            keys.Add(key.ToString("X"));
+            keys.Add(key.ToString("X26"));
             nextKey = key;
         }
         txs.Reverse();
@@ -305,14 +305,15 @@ public class MetalService
         var lookupTable = CreateMetadataLookupTable(
             metadataPool ?? 
             // Retrieve scoped metadata from on-chain
-            await SymbolService.SearchAccountMetadata(new AccountMetadataCriteria(
+            await SymbolService.SearchAccountMetadata( 
+                new AccountMetadataCriteria(
                 sourceAddress,
                 targetAddress,
-                key.ToString("X")))
+                key.ToString("X16")))
         );
         var scrappedValueBytes = Converter.Utf8ToBytes("");
         var txs = new List<IBaseTransaction>();
-        var currentKeyHex = key.ToString("X");
+        var currentKeyHex = key.ToString("X16");
         string? magic;
 
         do
@@ -341,7 +342,7 @@ public class MetalService
             ));
 
             magic = chunk.Value.magic;
-            currentKeyHex = chunk.Value.nextKey.ToString("X");
+            currentKeyHex = chunk.Value.nextKey.ToString("X26");
         } while (magic != "E");
         return txs;
     }
@@ -380,7 +381,7 @@ public class MetalService
             var packedChunk = MetalService.PackChunkBytes(magic, VERSION, additive, nextKey, chunkBytes);
             var key = packedChunk.Key;
 
-            lookupTable.TryGetValue(key.ToString("X"), out var onChainMetadata);
+            lookupTable.TryGetValue(key.ToString("X26"), out var onChainMetadata);
             if (onChainMetadata != null)
             {
                 // Only on-chain data to be announced.
@@ -411,7 +412,7 @@ public class MetalService
         var lookupTable = CreateMetadataLookupTable(
             metadataPool ??
             // Retrieve scoped metadata from on-chain
-            (await SymbolService.SearchAccountMetadata( new AccountMetadataCriteria(source, target))).ToArray()
+            (await SymbolService.SearchAccountMetadata(new AccountMetadataCriteria(source, target))).ToArray()
         );
         var collisions = new List<ulong>();
 
@@ -426,7 +427,7 @@ public class MetalService
                 continue;
             }
             var metadataTx = tx as AccountMetadataTransactionV1;
-            var keyHex = metadataTx?.ScopedMetadataKey.ToString("X");
+            var keyHex = metadataTx?.ScopedMetadataKey.ToString("X16");
             if (keyHex != null && lookupTable.ContainsKey(keyHex))
             {
                 Console.WriteLine($"{keyHex}: Already exists on the chain.");
@@ -448,7 +449,7 @@ public class MetalService
         var decodedBase64 = Decode(
             key,
             metadataPool ??
-            await SymbolService.SearchAccountMetadata( new AccountMetadataCriteria(sourceAddress, targetAddress)
+            await SymbolService.SearchAccountMetadata(new AccountMetadataCriteria(sourceAddress, targetAddress)
             {
                 SourceAddress = sourceAddress,
                 TargetAddress = targetAddress

@@ -6,9 +6,9 @@ using MetalForSymbol.models;
 using MetalForSymbol.utils;
 using Org.BouncyCastle.Crypto.Digests;
 using Network = MetalForSymbol.models.Network;
-using System.Text.Json;
 using CatSdk.Facade;
 using CatSdk.Symbol.Factory;
+using Newtonsoft.Json;
 
 namespace MetalForSymbol.services;
 using CatSdk;
@@ -28,8 +28,6 @@ public class SymbolService
     {
         Network = await GetNetwork();
     }
-    
-    //public static ToXYM(string microXYM)
     
     public string CalculateMetadataHash(
         MetadataType type,
@@ -56,41 +54,19 @@ public class SymbolService
         hasher.DoFinal(result, 0);
         return Converter.BytesToHex(result);
     }
-
+    
     private async Task<Network?> GetNetwork()
     {
         var json = await HttpService.GetJsonAsync(Config.NodeUrl + "/network/properties");
-        var n = JsonSerializer.Deserialize<NetworkProperties.Root>(json);
-        var feeJson = await HttpService.GetJsonAsync(Config.NodeUrl + "/network/fees/transaction");
-        var jsonNode = System.Text.Json.Nodes.JsonNode.Parse(feeJson);
-        if (jsonNode == null) throw new NullReferenceException("fees are null");
-        var fees = new TransactionFees(
-            int.Parse(jsonNode["averageFeeMultiplier"]?.ToString() ?? throw new InvalidOperationException()),
-            int.Parse(jsonNode["medianFeeMultiplier"]?.ToString() ?? throw new InvalidOperationException()),
-            int.Parse(jsonNode["highestFeeMultiplier"]?.ToString() ?? throw new InvalidOperationException()),
-            int.Parse(jsonNode["lowestFeeMultiplier"]?.ToString() ?? throw new InvalidOperationException()),
-            int.Parse(jsonNode["minFeeMultiplier"]?.ToString() ?? throw new InvalidOperationException())
-        );
-
-        CatSdk.Symbol.Network networkType = n?.network.identifier switch
+        var n = JsonConvert.DeserializeObject<NetworkProperties.Root>(json);
+        var networkType = n?.network.identifier switch
         {
             "mainnet" => CatSdk.Symbol.Network.MainNet,
             "testnet" => CatSdk.Symbol.Network.TestNet,
             _ => throw new Exception("network.identifier is invalid")
         };
-
-        if (fees == null) throw new NullReferenceException("fees are null");
-        return new Network(networkType, fees);
-    }
-    
-    private int GetFeeMultiplier(double? ratio = null)
-    {
-        ratio ??= Config.FeeRatio;
-        var transactionFees = Network?.TransactionFees;
-        if (transactionFees != null)
-            return (int)Math.Floor((double)(transactionFees.minFeeMultiplier + transactionFees.averageFeeMultiplier * ratio));
-
-        throw new NullReferenceException("transactionFees are null");
+        
+        return new Network(networkType);
     }
     
     public IBaseTransaction CreateMetadataTx(
@@ -116,7 +92,6 @@ public class SymbolService
     }
 
     private AggregateCompleteTransactionV2 ComposeAggregateCompleteTx(
-        float feeMultiplier, 
         IBaseTransaction[] txs,
         PublicKey signerPubKey
     ) {
@@ -130,17 +105,15 @@ public class SymbolService
             TransactionsHash = merkleHash,
             Deadline = new Timestamp(Network.Facade.Network.FromDatetime<NetworkTimestamp>(DateTime.UtcNow).AddHours(2).Timestamp),
         };
-        aggregateTransaction.Fee = new Amount((ulong)(aggregateTransaction.Size * feeMultiplier));
+        aggregateTransaction.Fee = new Amount((ulong)(aggregateTransaction.Size * Config.FeeRatio));
         return aggregateTransaction;
     }
     
     public List<AggregateCompleteTransactionV2> BuildAggregateCompleteTxBatches(
         List<IBaseTransaction> txs,
         PublicKey signerPublicKey,
-        float feeRatio = 0,
         int batchSize = 100)
     {
-        var feeMultiplier = GetFeeMultiplier(feeRatio);
         var txPool = txs.ToList();
         var batches = new List<AggregateCompleteTransactionV2>();
 
@@ -148,7 +121,6 @@ public class SymbolService
         {
             var innerTxs = txPool.Take(batchSize).ToArray();
             var aggregateTx = ComposeAggregateCompleteTx(
-                feeMultiplier,
                 innerTxs,
                 signerPublicKey);
 
@@ -164,10 +136,9 @@ public class SymbolService
         List<IBaseTransaction> txs,
         KeyPair signerKeyPair,
         List<KeyPair>? cosignaturesKeyPair = null,
-        float feeRatio = 0,
         int batchSize = 100)
     {
-        var batches = BuildAggregateCompleteTxBatches(txs, signerKeyPair.PublicKey, feeRatio, batchSize);
+        var batches = BuildAggregateCompleteTxBatches(txs, signerKeyPair.PublicKey, batchSize);
         var signedTxList = new List<AggregateCompleteTransactionV2>();
         if(Network == null) throw new NullReferenceException("network is null");
         foreach (var batch in batches) {
@@ -175,11 +146,11 @@ public class SymbolService
             {
                 const int sizePerCosignature = 8 + 32 + 64;
                 var calculatedSize = batch.Size + cosignaturesKeyPair.Count * sizePerCosignature;
-                batch.Fee = new Amount((ulong)(calculatedSize * GetFeeMultiplier(feeRatio)));
+                batch.Fee = new Amount((ulong)(calculatedSize * Config.FeeRatio));
             }
             else
             {
-                batch.Fee = new Amount((ulong)(batch.Size * GetFeeMultiplier(feeRatio)));
+                batch.Fee = new Amount(batch.Size * Config.FeeRatio);
             }
             var signature = Network.Facade.SignTransaction(signerKeyPair, batch);
             TransactionsFactory.AttachSignature(batch, signature);
@@ -202,7 +173,7 @@ public class SymbolService
     public async Task<MetadataEntry> GetMetadataByHash(string compositeHash) {
         var url = $"{Config.NodeUrl}/metadata/{compositeHash}";
         var json = await HttpService.GetJsonAsync(url);
-        var metadata = JsonSerializer.Deserialize<Metadata>(json);
+        var metadata = JsonConvert.DeserializeObject<Metadata>(json);
         if (metadata != null) return metadata.metadataEntry;
         throw new NullReferenceException("metadata is null");
     }
@@ -236,7 +207,7 @@ public class SymbolService
         }
     }
 
-    public async Task<List<Metadata>> SearchAccountMetadata(AccountMetadataCriteria criteria, byte pageSize = 100)
+    public async Task<List<Metadata>> SearchAccountMetadata(AccountMetadataCriteria criteria)
     {
         var count = 1;
         var metadataPool = new List<Metadata>();
@@ -246,7 +217,7 @@ public class SymbolService
             var targetAddress = Converter.AddressToString(Converter.HexToBytes(criteria.TargetAddress));
             var url = $"{Config.NodeUrl}/metadata?sourceAddress={sourceAddress}&targetAddress={targetAddress}&pageNumber={count}";
             var json = await HttpService.GetJsonAsync(url);
-            var root = JsonSerializer.Deserialize<Root>(json);
+            var root = JsonConvert.DeserializeObject<Root>(json);
             Debug.Assert(root != null, nameof(root) + " != null");
             if (root.data.Count == 0) break;
             metadataPool.AddRange(root.data ?? throw new InvalidOperationException());
@@ -259,12 +230,12 @@ public class SymbolService
 public class SymbolServiceConfig
 {
     public string NodeUrl;
-    public float FeeRatio;
+    public byte FeeRatio;
     public byte DeadlineHours;
     public byte BatchSize;
     public byte MaxParallels;
 
-    public SymbolServiceConfig(string _nodeUrl, float _feeRatio = 0.0f, byte _deadlineHours = 2, byte _batchSize = 100, byte _maxParallels = 10)
+    public SymbolServiceConfig(string _nodeUrl, byte _feeRatio = 100, byte _deadlineHours = 2, byte _batchSize = 100, byte _maxParallels = 10)
     {
         NodeUrl = _nodeUrl;
         FeeRatio = _feeRatio;

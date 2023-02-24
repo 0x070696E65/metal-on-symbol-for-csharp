@@ -16,6 +16,7 @@ Metal（メタル）とは Symbol ブロックチェーンに、任意の（サ�
 - bouncy castle
 <br>両方ここにあります
 <br>https://github.com/0x070696E65/symbol_cs_dual_sdk/releases
+- <a href="https://www.newtonsoft.com/json">Newtonsoft.Json</a> Nugetでインストールしてください
 
 ## Usage
 ### Forge
