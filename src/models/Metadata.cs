@@ -1,5 +1,3 @@
-namespace MetalForSymbol.models;
-
 public enum MetadataType {
  Account = 0,
  Mosaic = 1,

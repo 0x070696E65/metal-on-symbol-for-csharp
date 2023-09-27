@@ -8,8 +8,6 @@ using MetalForSymbol.utils;
 using Org.BouncyCastle.Crypto.Digests;
 using Org.BouncyCastle.Utilities.Encoders;
 
-namespace MetalForSymbol.services;
-
 public enum Magic {
     CHUNK,
     END_CHUNK,
@@ -34,7 +32,7 @@ public class MetalService
     private static byte[] DEFAULT_ADDITIVE = Converter.Utf8ToBytes("0000");
     
     // Use sha3_256 of first 64 bits, MSB should be 0
-    private static ulong GenerateMetadataKey(string input)
+    public static ulong GenerateMetadataKey(string input)
     {
         var bytes = Encoding.UTF8.GetBytes(input);
         
@@ -98,7 +96,7 @@ public class MetalService
         if (!hashHex.StartsWith(METAL_ID_HEADER_HEX)) {
             throw new Exception("Invalid metal ID.");
         }
-        return hashHex[METAL_ID_HEADER_HEX.Length..];
+        return hashHex.Substring(METAL_ID_HEADER_HEX.Length);
     }
     
     private static Dictionary<string, Metadata> CreateMetadataLookupTable(IEnumerable<Metadata>? metadataPool = null)
@@ -130,7 +128,7 @@ public class MetalService
         };
         // Header (24 bytes)
         value[0] = Converter.Utf8ToBytes(m)[0];
-        Array.Copy(Converter.Utf8ToBytes(version[..3]), 0, value, 1, 3);
+        Array.Copy(Converter.Utf8ToBytes(version.Substring(0,3)), 0, value, 1, 3);
         Array.Copy(additive, 0, value, 4, 4);
         Array.Copy(Converter.Utf8ToBytes(nextKey.ToString("X16")), 0, value, 8, 16);
         
@@ -168,9 +166,43 @@ public class MetalService
         return CalculateMetadataKey(payload, additive).Equals(key);   
     }
     
+    public static (string magic, string version, string checksum, byte[] nextKey, byte[] chunkPayload, byte[] additive)? ExtractChunkBytes(MetadataEntry chunk)
+    {
+        var magic = Converter.HexToUtf8(chunk.value.Substring(0, 2));
+        if (!IsMagic(magic))
+        {
+            Console.WriteLine($"Error: Malformed header magic {magic}");
+            return null;
+        }
+        var version = Converter.HexToUtf8(chunk.value.Substring(2, 6));
+        if (version != VERSION)
+        {
+            Console.WriteLine($"Error: Malformed header version {version}");
+            return null;
+        }
+        
+        var metadataValue = Converter.HexToBytes(chunk.value);
+        var checksum = GenerateMetadataKey(Converter.HexToUtf8(chunk.value)).ToString("X16");
+        if (!checksum.Equals(chunk.scopedMetadataKey))
+        {
+            Console.WriteLine($"Error: The chunk {chunk.scopedMetadataKey} is broken (calculated={checksum})");
+            return null;
+        }
+        var additive = new byte[4];
+        Array.Copy(metadataValue, 4, additive, 0, 4);
+        additive = Encoding.UTF8.GetBytes(Converter.BytesToHex(additive));
+        var nextKey = new byte[16];
+        Array.Copy(metadataValue, 8, nextKey, 0, 16);
+        var chunkPayload = metadataValue.Length != HEADER_SIZE + CHUNK_PAYLOAD_MAX_SIZE
+            ? metadataValue.Skip(HEADER_SIZE).ToArray()
+            : metadataValue.Skip(HEADER_SIZE).Take(CHUNK_PAYLOAD_MAX_SIZE).ToArray();
+
+        return (magic, version, checksum, nextKey, chunkPayload, additive);
+    }
+    
     public static (string magic, string version, string checksum, ulong nextKey, string chunkPayload, byte[] additive)? ExtractChunk(MetadataEntry chunk)
     {
-        var magic = Converter.HexToUtf8(chunk.value[..2]);
+        var magic = Converter.HexToUtf8(chunk.value.Substring(0, 2));
         if (!IsMagic(magic))
         {
             Console.WriteLine($"Error: Malformed header magic {magic}");
@@ -224,6 +256,31 @@ public class MetalService
 
         return decodedString;
     }
+    
+    public static byte[] DecodeBytes(string currentKeyHex, IEnumerable<Metadata> metadataPool)
+    {
+        var lookupTable = CreateMetadataLookupTable(metadataPool);
+        var decoded = new List<byte>{};
+        string magic;
+        do
+        {
+            if (!lookupTable.TryGetValue(currentKeyHex, out var metadata)) {
+                throw new Exception($"Error: The chunk {currentKeyHex} lost");
+            }
+            lookupTable.Remove(currentKeyHex);  // Prevent loop
+
+            var result = ExtractChunkBytes(metadata.metadataEntry);
+            if (result == null) {
+                break;
+            }
+
+            magic = result.Value.magic;
+            currentKeyHex = Encoding.UTF8.GetString(result.Value.nextKey);
+            decoded.AddRange(result.Value.chunkPayload.ToList());
+        } while (magic != "E");
+
+        return decoded.ToArray();
+    }
 
     private SymbolService SymbolService;
 
@@ -236,26 +293,26 @@ public class MetalService
     // - key: Metadata key of first chunk (undefined when no transactions were created)
     // - txs: List of metadata transaction (InnerTransaction for aggregate tx)
     // - additive: Actual additive that been used during encoding. You should store this for verifying the metal.
-    //public async Task<(ulong Key, List<IBaseTransaction> Txs, byte[]? Additive)> CreateForgeTxs(
     public async Task<(ulong Key, List<IBaseTransaction> Txs, byte[]? Additive)> CreateForgeTxs(
         PublicKey sourcePubKey,
         PublicKey targetPubKey,
         byte[] payload,
+        bool isBytes = true,
         byte[]? additive = null,
         Metadata[]? metadataPool = null)
     {
         additive ??= DEFAULT_ADDITIVE;
         var lookupTable = CreateMetadataLookupTable(metadataPool);
-        var payloadBase64Bytes = Converter.Utf8ToBytes(Base64.ToBase64String(payload));
+        var payloadBytes = isBytes ? payload : Converter.Utf8ToBytes(Base64.ToBase64String(payload));
         var txs = new List<IBaseTransaction>();
         var keys = new List<string>();
-        var chunks = (int) Math.Ceiling((double) payloadBase64Bytes.Length / CHUNK_PAYLOAD_MAX_SIZE);
+        var chunks = (int) Math.Ceiling((double) payloadBytes.Length / CHUNK_PAYLOAD_MAX_SIZE);
         var nextKey = GenerateChecksum(payload);
 
         for (var i = chunks - 1; i >= 0; i--)
         {
             var magic = i == chunks - 1 ? Magic.END_CHUNK : Magic.CHUNK;
-            var chunkBytes = payloadBase64Bytes.Skip(i * CHUNK_PAYLOAD_MAX_SIZE).Take(CHUNK_PAYLOAD_MAX_SIZE).ToArray();
+            var chunkBytes = payloadBytes.Skip(i * CHUNK_PAYLOAD_MAX_SIZE).Take(CHUNK_PAYLOAD_MAX_SIZE).ToArray();
 
             var (value, key) = PackChunkBytes(magic, VERSION, additive, nextKey, chunkBytes);
 
@@ -267,6 +324,7 @@ public class MetalService
                     sourcePubKey,
                     targetPubKey,
                     payload,
+                    isBytes,
                     GenerateRandomAdditive(),
                     metadataPool);
             }
@@ -476,10 +534,11 @@ public class MetalService
     public async Task<byte[]> Fetch(
         string source,
         string target,
-        string key
+        string key,
+        bool isBytes
     ) {
         var metadataPool = await SymbolService.SearchAccountMetadata(new AccountMetadataCriteria(source, target));
-        return Base64.Decode(Decode(key, metadataPool));
+        return isBytes ? DecodeBytes(key, metadataPool) : Base64.Decode(Decode(key, metadataPool));
     }
     
     // Returns:
@@ -487,12 +546,13 @@ public class MetalService
     //   - sourceAddress: Metadata source address
     //   - targetAddress: Metadata target address
     //   - key: Metadata key
-    public async Task<(byte[] Payload, string SourceAddress, string TargetAddress, string Key)> FetchByMetalId(string metalId) {
+    public async Task<(byte[] Payload, string SourceAddress, string TargetAddress, string Key)> FetchByMetalId(string metalId, bool bytes = true) {
         var metadataEntry = await GetFirstChunk(metalId);
         var payload = await Fetch(
             metadataEntry.sourceAddress,
             metadataEntry.targetAddress,
-            metadataEntry.scopedMetadataKey
+            metadataEntry.scopedMetadataKey,
+            bytes
         );
         return (payload, metadataEntry.sourceAddress, metadataEntry.targetAddress, metadataEntry.scopedMetadataKey);
     }

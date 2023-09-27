@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Text;
 using CatSdk.Symbol;
 using CatSdk.Utils;
-using MetalForSymbol.models;
 using MetalForSymbol.utils;
 using Org.BouncyCastle.Crypto.Digests;
 using Network = MetalForSymbol.models.Network;
@@ -10,18 +9,29 @@ using CatSdk.Facade;
 using CatSdk.Symbol.Factory;
 using Newtonsoft.Json;
 
-namespace MetalForSymbol.services;
-using CatSdk;
-
 public class SymbolService
 {
     public Network? Network;
     public SymbolServiceConfig Config;
+    public Func<string, Task<string>> HttpRequestMethod;
 
+    public SymbolService(SymbolServiceConfig _symbolServiceConfig, Func<string, Task<string>> _httpRequestMethod)
+    {
+        Config = _symbolServiceConfig;
+        Network = null;
+        HttpRequestMethod = _httpRequestMethod;
+    }
+    
     public SymbolService(SymbolServiceConfig _symbolServiceConfig)
     {
         Config = _symbolServiceConfig;
         Network = null;
+        HttpRequestMethod = HttpService.GetJsonAsync;
+    }
+    
+    public void Init(Network network)
+    {
+        Network = network;
     }
 
     public async Task Init()
@@ -57,7 +67,7 @@ public class SymbolService
     
     private async Task<Network?> GetNetwork()
     {
-        var json = await HttpService.GetJsonAsync(Config.NodeUrl + "/network/properties");
+        var json = await HttpRequestMethod(Config.NodeUrl + "/network/properties");
         var n = JsonConvert.DeserializeObject<NetworkProperties.Root>(json);
         var networkType = n?.network.identifier switch
         {
@@ -103,7 +113,7 @@ public class SymbolService
             Transactions = txs,
             SignerPublicKey = signerPubKey,
             TransactionsHash = merkleHash,
-            Deadline = new Timestamp(Network.Facade.Network.FromDatetime<NetworkTimestamp>(DateTime.UtcNow).AddHours(2).Timestamp),
+            Deadline = new Timestamp(Network.Facade.Network.FromDatetime<CatSdk.NetworkTimestamp>(DateTime.UtcNow).AddHours(2).Timestamp),
         };
         aggregateTransaction.Fee = new Amount((ulong)(aggregateTransaction.Size * Config.FeeRatio));
         return aggregateTransaction;
@@ -172,7 +182,7 @@ public class SymbolService
     
     public async Task<MetadataEntry> GetMetadataByHash(string compositeHash) {
         var url = $"{Config.NodeUrl}/metadata/{compositeHash}";
-        var json = await HttpService.GetJsonAsync(url);
+        var json = await HttpRequestMethod(url);
         var metadata = JsonConvert.DeserializeObject<Metadata>(json);
         if (metadata != null) return metadata.metadataEntry;
         throw new NullReferenceException("metadata is null");
@@ -216,11 +226,11 @@ public class SymbolService
             var sourceAddress = Converter.AddressToString(Converter.HexToBytes(criteria.SourceAddress));
             var targetAddress = Converter.AddressToString(Converter.HexToBytes(criteria.TargetAddress));
             var url = $"{Config.NodeUrl}/metadata?sourceAddress={sourceAddress}&targetAddress={targetAddress}&pageNumber={count}";
-            var json = await HttpService.GetJsonAsync(url);
+            var json = await HttpRequestMethod(url);
             var root = JsonConvert.DeserializeObject<Root>(json);
             Debug.Assert(root != null, nameof(root) + " != null");
-            if (root.data.Count == 0) break;
-            metadataPool.AddRange(root.data ?? throw new InvalidOperationException());
+            if (root != null && root.data.Count == 0) break;
+            if (root != null) metadataPool.AddRange(root.data ?? throw new InvalidOperationException());
             count++;
         }
         return metadataPool;

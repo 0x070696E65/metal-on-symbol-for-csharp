@@ -1,9 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
-
     <PropertyGroup>
-        <TargetFramework>net6.0</TargetFramework>
+        <TargetFramework>netstandard2.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+        <LangVersion>latest</LangVersion>
+        <AssemblyVersion>1</AssemblyVersion>
+        <FileVersion>1.0.0</FileVersion>
+        <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     </PropertyGroup>
 
     <ItemGroup>
@@ -11,10 +14,10 @@
     </ItemGroup>
 
     <ItemGroup>
-      <Reference Include="BouncyCastle.Crypto, Version=1.9.0.0, Culture=neutral, PublicKeyToken=0e99375e54769942">
+      <Reference Include="BouncyCastle.Crypto">
         <HintPath>Plugins\BouncyCastle.Crypto.dll</HintPath>
       </Reference>
-      <Reference Include="CatSdk, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null">
+      <Reference Include="CatSdk">
         <HintPath>Plugins\CatSdk.dll</HintPath>
       </Reference>
     </ItemGroup>

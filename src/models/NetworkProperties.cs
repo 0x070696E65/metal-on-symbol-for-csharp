@@ -1,5 +1,3 @@
-namespace MetalForSymbol.models;
-
 public class NetworkProperties
 {
     public class Root
