@@ -352,14 +352,13 @@ public class MetalService
         MetadataType type,
         PublicKey sourcePubKey,
         PublicKey targetPubKey,
-        MosaicId targetId,
         ulong key,
         List<Metadata>? metadataPool = null
     )
     {
         if (SymbolService.Network == null) throw new NullReferenceException("network is null");
-        var sourceAddress = Converter.AddressToString(SymbolService.Network.Facade.Network.PublicKeyToAddress(sourcePubKey.bytes).bytes);
-        var targetAddress = Converter.AddressToString(SymbolService.Network.Facade.Network.PublicKeyToAddress(targetPubKey.bytes).bytes);
+        var sourceAddress = Converter.BytesToHex(SymbolService.Network.Facade.Network.PublicKeyToAddress(sourcePubKey.bytes).bytes);
+        var targetAddress = Converter.BytesToHex(SymbolService.Network.Facade.Network.PublicKeyToAddress(targetPubKey.bytes).bytes);
         var lookupTable = CreateMetadataLookupTable(
             metadataPool ?? 
             // Retrieve scoped metadata from on-chain
@@ -373,7 +372,7 @@ public class MetalService
         var txs = new List<IBaseTransaction>();
         var currentKeyHex = key.ToString("X16");
         string? magic;
-
+        
         do
         {
             if (!lookupTable.TryGetValue(currentKeyHex, out var metadata))
@@ -390,17 +389,17 @@ public class MetalService
                 return null;
             }
 
-            var valueBytes = Converter.Utf8ToBytes(metadata.metadataEntry.value);
+            var valueBytes = Converter.HexToBytes(metadata.metadataEntry.value);
             txs.Add(SymbolService.CreateMetadataTx(
                 sourcePubKey,
                 targetPubKey,
                 ulong.Parse(metadata.metadataEntry.scopedMetadataKey, NumberStyles.HexNumber),
-                Converter.HexToBytes(Converter.BytesToHex(Converter.Xor(valueBytes, scrappedValueBytes))),
+                Converter.Xor(valueBytes, scrappedValueBytes),
                 (ushort)(scrappedValueBytes.Length - valueBytes.Length)
             ));
 
             magic = chunk.Value.magic;
-            currentKeyHex = chunk.Value.nextKey.ToString("X26");
+            currentKeyHex = chunk.Value.nextKey.ToString("X16");
         } while (magic != "E");
         return txs;
     }
