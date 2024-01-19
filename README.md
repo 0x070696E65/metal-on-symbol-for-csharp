@@ -10,7 +10,7 @@ Metal（メタル）とは Symbol ブロックチェーンに、任意の（サ�
 <a href="https://github.com/OPENSPHERE-Inc/metal-on-symbol" target="_blank">詳しくはこちら</a>
 
 ## Install
-<a href="[https://github.com/0x070696E65/metal-on-symbol-for-csharp/release](https://www.nuget.org/packages/MetalOnSymbol)" target="_blank">Metal on Symbol for C#</a><br>
+<a href="https://www.nuget.org/packages/MetalOnSymbol" target="_blank">Metal on Symbol for C#</a><br>
 Nugetからインストールしてください<br>
 
 ## Usage
