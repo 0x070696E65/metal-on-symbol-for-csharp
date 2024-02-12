@@ -1,3 +1,6 @@
+using SymbolSdk;
+using SymbolSdk.Symbol;
+
 public enum MetadataType {
  Account = 0,
  Mosaic = 1,

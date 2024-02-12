@@ -1,31 +1,22 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
-        <TargetFramework>netstandard2.0</TargetFramework>
+        <TargetFramework>netstandard2.1</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <LangVersion>latest</LangVersion>
-        <AssemblyVersion>2</AssemblyVersion>
-        <FileVersion>1.0.1</FileVersion>
+        <AssemblyVersion>4</AssemblyVersion>
+        <FileVersion>1.0.4</FileVersion>
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
-        <Version>1.0.3</Version>
+        <Version>1.0.4</Version>
     </PropertyGroup>
 
     <ItemGroup>
       <Folder Include="Plugins" />
     </ItemGroup>
-
+    
     <ItemGroup>
-      <Reference Include="BouncyCastle.Crypto">
-        <HintPath>Plugins\BouncyCastle.Crypto.dll</HintPath>
-      </Reference>
-      <Reference Include="CatSdk">
-        <HintPath>Plugins\CatSdk.dll</HintPath>
-      </Reference>
-    </ItemGroup>
-
-    <ItemGroup>
-      <PackageReference Include="CatSdk" Version="1.0.7" />
       <PackageReference Include="Newtonsoft.Json" Version="13.0.3-beta1" />
+      <PackageReference Include="SymbolSdk" Version="1.0.6" />
     </ItemGroup>
 
 </Project>

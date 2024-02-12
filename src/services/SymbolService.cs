@@ -1,12 +1,10 @@
 using System.Diagnostics;
 using System.Text;
-using CatSdk.Symbol;
-using CatSdk.Utils;
 using MetalForSymbol.utils;
 using Org.BouncyCastle.Crypto.Digests;
 using Network = MetalForSymbol.models.Network;
-using CatSdk.Facade;
-using CatSdk.Symbol.Factory;
+using SymbolSdk;
+using SymbolSdk.Symbol;
 using Newtonsoft.Json;
 
 public class SymbolService
@@ -71,8 +69,8 @@ public class SymbolService
         var n = JsonConvert.DeserializeObject<NetworkProperties.Root>(json);
         var networkType = n?.network.identifier switch
         {
-            "mainnet" => CatSdk.Symbol.Network.MainNet,
-            "testnet" => CatSdk.Symbol.Network.TestNet,
+            "mainnet" => SymbolSdk.Symbol.Network.MainNet,
+            "testnet" => SymbolSdk.Symbol.Network.TestNet,
             _ => throw new Exception("network.identifier is invalid")
         };
         
@@ -113,7 +111,7 @@ public class SymbolService
             Transactions = txs,
             SignerPublicKey = signerPubKey,
             TransactionsHash = merkleHash,
-            Deadline = new Timestamp(Network.Facade.Network.FromDatetime<CatSdk.NetworkTimestamp>(DateTime.UtcNow).AddHours(2).Timestamp),
+            Deadline = Network.Facade.Network.CreateDeadline(3600)
         };
         aggregateTransaction.Fee = new Amount((ulong)(aggregateTransaction.Size * Config.FeeRatio));
         return aggregateTransaction;
@@ -163,7 +161,7 @@ public class SymbolService
                 batch.Fee = new Amount(batch.Size * Config.FeeRatio);
             }
             var signature = Network.Facade.SignTransaction(signerKeyPair, batch);
-            TransactionsFactory.AttachSignature(batch, signature);
+            TransactionHelper.AttachSignature(batch, signature);
             
             if (cosignaturesKeyPair != null)
             {
@@ -187,15 +185,22 @@ public class SymbolService
         if (metadata != null) return metadata.metadataEntry;
         throw new NullReferenceException("metadata is null");
     }
+    
+    public static string CreatePayload(AggregateCompleteTransactionV2 tx)
+    {
+        var transactionBuffer = tx.Serialize();
+        var hexPayload = Converter.BytesToHex(transactionBuffer);
+        return "{\"payload\": \"" + hexPayload + "\"}";
+    }
 
     public async Task<string> ExecuteBatches(List<AggregateCompleteTransactionV2> batches)
     {
-        var workers = batches.Select(batch => TransactionsFactory.CreatePayload(batch))
+        var workers = batches.Select(CreatePayload)
             .Select(payload => Task.Run(async () =>
             {
                 using var client = new HttpClient();
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
-                await client.PutAsync(Config.NodeUrl + "/transactions", content);
+                var res = await client.PutAsync(Config.NodeUrl + "/transactions", content);
             }))
             .ToList();
         try
@@ -215,6 +220,43 @@ public class SymbolService
                 work.Dispose();
             }
         }
+    }
+    
+    public async Task<List<Metadata>> SearchMetadataWithKey(AccountMetadataCriteria criteria)
+    {
+        var metadataPool = new List<Metadata>();
+        var scopedMetadataKey = criteria.Key;
+        MetalServiceV2.Magic magic = MetalServiceV2.Magic.CHUNK;
+        while (true)
+        {
+            var sourceAddress = Converter.AddressToString(Converter.HexToBytes(criteria.SourceAddress));
+            var targetAddress = Converter.AddressToString(Converter.HexToBytes(criteria.TargetAddress));
+            var url = $"{Config.NodeUrl}/metadata?sourceAddress={sourceAddress}&targetAddress={targetAddress}&scopedMetadataKey={scopedMetadataKey}";
+            var json = await HttpRequestMethod(url);
+            var root = JsonConvert.DeserializeObject<Root>(json);
+            Debug.Assert(root != null, nameof(root) + " != null");
+            if (root.data.Count == 0) break;
+            var raw = Converter.HexToUtf8(root.data[0].metadataEntry.value);
+            var version = raw.Substring(1, 3);
+            var _magic = raw[..1];
+            if (version == "010")
+            {
+                magic = _magic == "E" ? MetalServiceV2.Magic.END_CHUNK : MetalServiceV2.Magic.CHUNK;
+                scopedMetadataKey = raw.Substring(8, 16);
+                metadataPool.AddRange(root.data ?? throw new InvalidOperationException());
+            }
+            else
+            {
+                var rawBin = Converter.HexToBytes(root.data[0].metadataEntry.value);
+                magic = rawBin[0] != 0 ? MetalServiceV2.Magic.END_CHUNK : MetalServiceV2.Magic.CHUNK;
+                var _meta = rawBin.ToList().GetRange(4, 8);
+                _meta.Reverse();
+                scopedMetadataKey = Converter.BytesToHex(_meta.ToArray());
+                metadataPool.AddRange(root.data ?? throw new InvalidOperationException());
+            }
+            if (magic == MetalServiceV2.Magic.END_CHUNK) break;
+        }
+        return metadataPool;
     }
 
     public async Task<List<Metadata>> SearchAccountMetadata(AccountMetadataCriteria criteria)
