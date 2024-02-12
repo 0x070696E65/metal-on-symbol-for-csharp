@@ -9,14 +9,9 @@ Metal（メタル）とは Symbol ブロックチェーンに、任意の（サ�
 以下（Metal on Symbol）を読んでもらって理解したのちに活用してください。<br>
 <a href="https://github.com/OPENSPHERE-Inc/metal-on-symbol" target="_blank">詳しくはこちら</a>
 
-## Requirement
-- <a href="https://github.com/0x070696E65/metal-on-symbol-for-csharp/releases" target="_blank">Metal on Symbol for C#</a>
-  <br>https://github.com/0x070696E65/metal-on-symbol-for-csharp/releases
-- symbol csharp sdk
-- bouncy castle
-<br>両方ここにあります
-<br>https://github.com/0x070696E65/symbol_cs_dual_sdk/releases
-- <a href="https://www.newtonsoft.com/json">Newtonsoft.Json</a> Nugetでインストールしてください
+## Install
+<a href="https://www.nuget.org/packages/MetalOnSymbol" target="_blank">Metal on Symbol for C#</a><br>
+Nugetからインストールしてください<br>
 
 ## Usage
 ### Forge
