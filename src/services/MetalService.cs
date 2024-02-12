@@ -8,7 +8,7 @@ using MetalForSymbol.utils;
 using Org.BouncyCastle.Crypto.Digests;
 using Org.BouncyCastle.Utilities.Encoders;
 
-public class MetalService
+internal class MetalService
 {
     public enum Magic {
         CHUNK,

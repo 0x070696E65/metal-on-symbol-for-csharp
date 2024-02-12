@@ -16,8 +16,8 @@ Nugetからインストールしてください<br>
 ## Usage
 ### Forge
 ```c#
-using CatSdk.CryptoTypes;
-using CatSdk.Symbol;
+using SymbolSdk;
+using SymbolSdk.Symbol;
 using MetalForSymbol.models;
 using MetalForSymbol.services;
 
@@ -28,7 +28,7 @@ var config = new SymbolServiceConfig("NODE_URL");
 var symbolService = new SymbolService(config);
 await symbolService.Init();
 
-var metalService = new MetalService(symbolService);
+var metalService = new MetalServiceV2(symbolService);
 
 var alicePrivateKey = new PrivateKey("SOURCE_PRIVATE_KEY");
 var aliceKeyPair = new KeyPair(alicePrivateKey);
