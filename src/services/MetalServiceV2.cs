@@ -29,6 +29,10 @@ public class MetalServiceV2
     {
         return MetalService.GenerateMetadataKey(input);
     }
+    public static ulong GenerateMetadataKey(byte[] input)
+    {
+        return MetalService.GenerateMetadataKey(input);
+    }
     
     // Use sha3_256 of first 64 bits
     private static ulong GenerateChecksum(byte[] input) {
@@ -89,13 +93,13 @@ public class MetalServiceV2
         // Header (12 bytes)
         value[0] = (byte)((byte)magic & 0x80);
         value[1] = (byte)((byte)version & 0xFF);
-        Array.Copy(BitConverter.GetBytes(additive), 0, value, 2, 2);
-        Array.Copy(BitConverter.GetBytes(nextKey), 0, value, 4, 8);
+        Array.Copy(BitConverter.GetBytes(additive).Reverse().ToArray(), 0, value, 2, 2);
+        Array.Copy(BitConverter.GetBytes(nextKey).Reverse().ToArray(), 0, value, 4, 8);
         
         // Payload (max 1012 bytes)
         Array.Copy(chunkBytes, 0, value, HEADER_SIZE, chunkBytes.Length);
         
-        var key = GenerateMetadataKey(Encoding.UTF8.GetString(value));
+        var key = GenerateMetadataKey(value);
         return (value, key);
     }
     
@@ -138,14 +142,16 @@ public class MetalServiceV2
             return (_magic, version, _checkSum, result.Value.nextKey, _chunkPayload, _additive);
         }
         
-        var checksum = GenerateMetadataKey(Converter.HexToUtf8(chunk.value));
+        var checksum = GenerateMetadataKey(chunkValue);
         if (!checksum.Equals(ulong.Parse(chunk.scopedMetadataKey, NumberStyles.HexNumber)))
         {
-            Console.WriteLine($"Error: The chunk {Converter.HexToUtf8(chunk.scopedMetadataKey)} is broken (calculated={checksum})");
+            Console.WriteLine($"Error: The chunk {chunk.scopedMetadataKey} is broken (calculated={checksum})");
             return null;
         }
-        var additive = BitConverter.ToInt16(chunkValue, 2);
-        var nextKey = BitConverter.ToUInt64(chunkValue, 4);
+        var addr = chunkValue.ToList().GetRange(2, 2).ToArray();
+        var additive = BitConverter.ToInt16(addr.Reverse().ToArray(), 0);
+        var keyr = chunkValue.ToList().GetRange(4, 8).ToArray();
+        var nextKey = BitConverter.ToUInt64(keyr.Reverse().ToArray());
         var chunkPayload = chunkValue.ToList().GetRange(HEADER_SIZE, chunkValue.Length - HEADER_SIZE).ToArray();
         
         return (magic, version, checksum, nextKey, chunkPayload, additive);
@@ -235,7 +241,7 @@ public class MetalServiceV2
                     (ushort)value.Length));
             }
 
-            keys.Add(key.ToString("X26"));
+            keys.Add(key.ToString("X16"));
             nextKey = key;
         }
         txs.Reverse();

@@ -32,9 +32,9 @@ public class SymbolService
         Network = network;
     }
 
-    public async Task Init()
+    public async Task Init(bool isPrivate = false)
     {
-        Network = await GetNetwork();
+        Network = await GetNetwork(isPrivate);
     }
     
     public string CalculateMetadataHash(
@@ -63,10 +63,17 @@ public class SymbolService
         return Converter.BytesToHex(result);
     }
     
-    private async Task<Network?> GetNetwork()
+    private async Task<Network?> GetNetwork(bool isPrivate = false)
     {
         var json = await HttpRequestMethod(Config.NodeUrl + "/network/properties");
         var n = JsonConvert.DeserializeObject<NetworkProperties.Root>(json);
+        if (isPrivate)
+        {
+            var identifier = n?.network.identifier == "mainnet" ? (byte)0x68 : (byte)0x98;
+            var unixTimeStamp = double.Parse(n?.network.epochAdjustment.TrimEnd('s'));
+            var date = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(unixTimeStamp);
+            return new Network(new SymbolSdk.Symbol.Network(n?.network.identifier, identifier, date, new Hash256(Converter.HexToBytes(n?.network.generationHashSeed))));
+        }
         var networkType = n?.network.identifier switch
         {
             "mainnet" => SymbolSdk.Symbol.Network.MainNet,
@@ -250,7 +257,6 @@ public class SymbolService
                 var rawBin = Converter.HexToBytes(root.data[0].metadataEntry.value);
                 magic = rawBin[0] != 0 ? MetalServiceV2.Magic.END_CHUNK : MetalServiceV2.Magic.CHUNK;
                 var _meta = rawBin.ToList().GetRange(4, 8);
-                _meta.Reverse();
                 scopedMetadataKey = Converter.BytesToHex(_meta.ToArray());
                 metadataPool.AddRange(root.data ?? throw new InvalidOperationException());
             }

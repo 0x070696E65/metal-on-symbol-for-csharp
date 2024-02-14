@@ -47,6 +47,19 @@ internal class MetalService
         return (ulong)((uintArray[1] & 0x7FFFFFFF) * 0x100000000 + uintArray[0]);
     }
     
+    public static ulong GenerateMetadataKey(byte[] bytes)
+    {
+        var sha3256Digest = new Sha3Digest(256);
+        var sha3256Hash = new byte[sha3256Digest.GetDigestSize()];
+        sha3256Digest.BlockUpdate(bytes, 0, bytes.Length);
+        sha3256Digest.DoFinal(sha3256Hash, 0);
+        var uintArray = sha3256Hash.Select((x, i) => new { Index = i / 4, Value = x })
+            .GroupBy(x => x.Index, x => x.Value)
+            .Select(x => BitConverter.ToUInt32(x.ToArray(), 0))
+            .ToArray();
+        return (ulong)((uintArray[1] & 0x7FFFFFFF) * 0x100000000 + uintArray[0]);
+    }
+    
     // Use sha3_256 of first 64 bits
     public static ulong GenerateChecksum(byte[] input) {
         if (input.Length == 0) {

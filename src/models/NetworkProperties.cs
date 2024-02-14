@@ -8,5 +8,7 @@ public class NetworkProperties
     public class Network
     {
         public string identifier { get; set; } = null!;
+        public string generationHashSeed { get; set; } = null!;
+        public string epochAdjustment { get; set; } = null!;
     }
 }
