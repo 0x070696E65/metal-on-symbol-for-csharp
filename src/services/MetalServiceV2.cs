@@ -8,9 +8,60 @@ using Org.BouncyCastle.Utilities.Encoders;
 
 public class MetalServiceV2
 {
+    private SymbolService SymbolService;
+
+    public MetalServiceV2(SymbolService _symbolService)
+    {
+        SymbolService = _symbolService;
+    }
+    
+    public class ChunkData(Magic magic, byte version, ulong checksum, ulong nextKey, byte[] chunkPayload, bool text)
+    {
+        public Magic Magic = magic;
+        public byte Version = version;
+        public ulong Checksum = checksum;
+        public ulong NextKey = nextKey;
+        public byte[] ChunkPayload = chunkPayload;
+        public readonly bool text = text;
+    }
+
+    private class ChunkDataV1 : ChunkData
+    {
+        public byte[] Addtive;
+        public ChunkDataV1(Magic magic, byte version, ulong checksum, ulong nextKey, byte[] chunkPayload, byte[] additive, bool text) 
+            : base(magic, version, checksum, nextKey, chunkPayload, text)
+        {
+            Magic = magic;
+            Checksum = checksum;
+            NextKey = nextKey;
+            ChunkPayload = chunkPayload;
+            Addtive = additive;
+        }
+    }
+    
+    private class ChunkDataV2 : ChunkData
+    {
+        public ushort Addtive;
+        public ChunkDataV2(Magic magic, byte version, ulong checksum, ulong nextKey, byte[] chunkPayload, ushort additive, bool text) 
+            : base(magic, version, checksum, nextKey, chunkPayload, text)
+        {
+            Magic = magic;
+            Checksum = checksum;
+            NextKey = nextKey;
+            ChunkPayload = chunkPayload;
+            Addtive = additive;
+        }
+    }
+    
     public enum Magic {
         CHUNK = 0x00,
         END_CHUNK = 0x80,
+    }
+
+    private enum Flag
+    {
+        MAGIC = 0x80,
+        TEXT = 0x40,
     }
     
     private const short DEFAULT_ADDITIVE = 0;
@@ -18,11 +69,6 @@ public class MetalServiceV2
     private const int HEADER_SIZE = 12;
     private const int CHUNK_PAYLOAD_MAX_SIZE = 1012;
     private const string METAL_ID_HEADER_HEX = "0B2A";
-    
-    private static bool IsMagic(byte value)
-    {
-        return value is (byte)Magic.CHUNK or (byte)Magic.END_CHUNK;
-    }
     
     // Use sha3_256 of first 64 bits, MSB should be 0
     public static ulong GenerateMetadataKey(string input)
@@ -35,12 +81,12 @@ public class MetalServiceV2
     }
     
     // Use sha3_256 of first 64 bits
-    private static ulong GenerateChecksum(byte[] input) {
+    public static ulong GenerateChecksum(byte[] input) {
         return MetalService.GenerateChecksum(input);
     }
 
     // Return 64 bytes hex string
-    public static string RestoreMetadataHash(string metalId)
+    private static string RestoreMetadataHash(string metalId)
     {
         return MetalService.RestoreMetadataHash(metalId);
     }
@@ -83,7 +129,8 @@ public class MetalServiceV2
         short version,
         short additive,
         ulong nextKey, 
-        byte[] chunkBytes
+        byte[] chunkBytes,
+        bool text = false
     )
     {
         // Append next scoped key into chunk's tail (except end of line)
@@ -91,7 +138,8 @@ public class MetalServiceV2
         Debug.Assert(value.Length <= 1024);
 
         // Header (12 bytes)
-        value[0] = (byte)((byte)magic & 0x80);
+        var flags = (byte)magic & (byte)Flag.MAGIC | (text ? (byte)Flag.TEXT : 0);
+        value[0] = (byte)flags;
         value[1] = (byte)((byte)version & 0xFF);
         Array.Copy(BitConverter.GetBytes(additive).Reverse().ToArray(), 0, value, 2, 2);
         Array.Copy(BitConverter.GetBytes(nextKey).Reverse().ToArray(), 0, value, 4, 8);
@@ -102,15 +150,43 @@ public class MetalServiceV2
         var key = GenerateMetadataKey(value);
         return (value, key);
     }
-    
-    public static ulong CalculateMetadataKey(byte[] payload, short additive = DEFAULT_ADDITIVE)
+
+    public static (byte[] CombinedPayload, int TextChunks) CombinePayloadWithText(byte[] payload, string? text = null)
     {
-        var chunks = (int)Math.Ceiling((double)payload.Length / CHUNK_PAYLOAD_MAX_SIZE);
-        var nextKey = GenerateChecksum(payload);
+        var textBytes = text != null ? Converter.Utf8ToBytes(text) : Array.Empty<byte>();
+        var textSize = textBytes.Length % CHUNK_PAYLOAD_MAX_SIZE != 0 
+            ? textBytes.Length + 1 // If textJson section end at mid-chunk then append null char
+            : textBytes.Length;
+        var combinedPayload = new byte[textSize + payload.Length];
+        var offset = 0;
+        
+        if (textBytes.Length > 0) {
+            Array.Copy(textBytes, 0, combinedPayload, offset, textBytes.Length);
+            offset += textBytes.Length;
+        }
+        if (textBytes.Length % CHUNK_PAYLOAD_MAX_SIZE != 0) {
+            // append null char as terminator
+            combinedPayload[offset] = 0x00;
+            offset++;
+        }
+        if (payload.Length > 0) {
+            Array.Copy(payload, 0, combinedPayload, offset, payload.Length);
+        }
+        return (
+            combinedPayload,
+            (int)Math.Ceiling((double)textBytes.Length / CHUNK_PAYLOAD_MAX_SIZE)
+        );
+    }
+    
+    private static ulong CalculateMetadataKey(byte[] payload, short additive = DEFAULT_ADDITIVE, string? text = null)
+    {
+        var (combinedPayload, textChunks) = CombinePayloadWithText(payload, text);
+        var chunks = (int)Math.Ceiling((double)combinedPayload.Length / CHUNK_PAYLOAD_MAX_SIZE);
+        var nextKey = GenerateChecksum(combinedPayload);
         for (var i = chunks - 1; i >= 0; i--)
         {
             var magic = i == chunks - 1 ? Magic.END_CHUNK : Magic.CHUNK;
-            var chunkBytes = payload.Skip(i * CHUNK_PAYLOAD_MAX_SIZE).Take(CHUNK_PAYLOAD_MAX_SIZE).ToArray();
+            var chunkBytes = combinedPayload.Skip(i * CHUNK_PAYLOAD_MAX_SIZE).Take(CHUNK_PAYLOAD_MAX_SIZE).ToArray();
             var result = PackChunkBytes(magic, VERSION, additive, nextKey, chunkBytes);
             nextKey = result.Key;
         }
@@ -121,25 +197,26 @@ public class MetalServiceV2
     public static bool VerifyMetadataKey (
         ulong key,
         byte[] payload, 
-        short additive = DEFAULT_ADDITIVE
+        short additive = DEFAULT_ADDITIVE,
+        string? text = null
     ) {
-        return CalculateMetadataKey(payload, additive).Equals(key);   
+        return CalculateMetadataKey(payload, additive, text).Equals(key);   
     }
     
-    public static (Magic magic, byte version, ulong checksum, ulong nextKey, byte[] chunkPayload, short additive)? ExtractChunk(MetadataEntry chunk)
+    private static ChunkData? ExtractChunk(MetadataEntry chunk)
     {
         var chunkValue = Converter.HexToBytes(chunk.value);
-        var magic = (byte)(chunkValue[0] & 0x80) == (byte)Magic.END_CHUNK ? Magic.END_CHUNK : Magic.CHUNK;
+        var magic = (byte)(chunkValue[0] & (byte)Flag.MAGIC) == (byte)Magic.END_CHUNK ? Magic.END_CHUNK : Magic.CHUNK;
         var version = chunkValue[1];
         if (version != VERSION)
         {
             var result = MetalService.ExtractChunk(chunk);
             if(result == null) throw new Exception("Error: V1 chunk is something brokern.");
             var _magic = result.Value.magic == "E" ? Magic.END_CHUNK : Magic.CHUNK;
-            var _additive = BitConverter.ToInt16(result.Value.additive);
+            var _additive = result.Value.additive;
             var _checkSum = ulong.Parse(result.Value.checksum, NumberStyles.HexNumber);
             var _chunkPayload = Base64.Decode(result.Value.chunkPayload);
-            return (_magic, version, _checkSum, result.Value.nextKey, _chunkPayload, _additive);
+            return new ChunkDataV1(_magic, version, _checkSum, result.Value.nextKey, _chunkPayload, _additive, false);
         }
         
         var checksum = GenerateMetadataKey(chunkValue);
@@ -148,25 +225,47 @@ public class MetalServiceV2
             Console.WriteLine($"Error: The chunk {chunk.scopedMetadataKey} is broken (calculated={checksum})");
             return null;
         }
+        var text = (chunkValue[0] & (byte)Flag.TEXT) != 0;
         var addr = chunkValue.ToList().GetRange(2, 2).ToArray();
-        var additive = BitConverter.ToInt16(addr.Reverse().ToArray(), 0);
+        var additive = BitConverter.ToUInt16(addr.Reverse().ToArray(), 0);
         var keyr = chunkValue.ToList().GetRange(4, 8).ToArray();
         var nextKey = BitConverter.ToUInt64(keyr.Reverse().ToArray());
         var chunkPayload = chunkValue.ToList().GetRange(HEADER_SIZE, chunkValue.Length - HEADER_SIZE).ToArray();
+        return new ChunkDataV2(magic, version, checksum, nextKey, chunkPayload, additive, text);
+    }
+
+    private static (byte[] ChunkPayload, byte[]? ChunkText) SplitChunkPayloadAndText(ChunkData chunkData)
+    {
+        if (!chunkData.text)
+        {
+            // No text in the chunk
+            return (chunkData.ChunkPayload, null);
+        }
         
-        return (magic, version, checksum, nextKey, chunkPayload, additive);
+        // Extract text section until null char is encountered.
+        var textBytes = new List<byte>();
+        for (var i = 0; i < chunkData.ChunkPayload.Length && chunkData.ChunkPayload[i] != 0; i++) {
+            textBytes.Add(chunkData.ChunkPayload[i]);
+        }
+
+        var chunkPayload = new byte[chunkData.ChunkPayload.Length - textBytes.Count - 1];
+        Array.Copy(chunkData.ChunkPayload, textBytes.Count + 1, chunkPayload, 0, chunkPayload.Length);
+
+        return (chunkPayload, textBytes.ToArray());
     }
     
-    public static byte[] Decode(string currentKeyHex, IEnumerable<Metadata> metadataPool)
+    private static (byte[] DecodedPayload, byte[]? DecodedText) Decode(string currentKeyHex, IEnumerable<Metadata> metadataPool)
     {
         var lookupTable = CreateMetadataLookupTable(metadataPool);
-        var decodedBytes = new List<byte>{};
+        var decodedPayload = new List<byte>{};
+        var decodedText = new List<byte>{};
         byte? version = null;
         Magic magic;
         do
         {
             if (!lookupTable.Remove(currentKeyHex, out var metadata)) {
-                throw new Exception($"Error: The chunk {currentKeyHex} lost");
+                Console.Error.WriteLine($"Error: The chunk {currentKeyHex} lost");
+                break;
             }
 
             // Prevent loop
@@ -175,22 +274,39 @@ public class MetalServiceV2
                 break;
             }
 
-            version = result.Value.version;
-            magic = result.Value.magic;
-            currentKeyHex = result.Value.nextKey.ToString("X16");
-            decodedBytes.AddRange(result.Value.chunkPayload);
-        } while (magic != Magic.END_CHUNK);
-        if(version != null || version == VERSION) {
-            return decodedBytes.ToArray();
-        }
-        return Base64.Decode(Converter.BytesToHex(decodedBytes.ToArray()));
-    }
-    
-    private SymbolService SymbolService;
+            if (version != null && version != result.Version)
+            {
+                Console.Error.WriteLine("Error: Inconsistent chunk versions.");
+                break;
+            }
 
-    public MetalServiceV2(SymbolService _symbolService)
-    {
-        SymbolService = _symbolService;
+            version = result.Version;
+            magic = result.Magic;
+            currentKeyHex = result.NextKey.ToString("X16");
+
+            var (chunkPayload, chunkText) = SplitChunkPayloadAndText(result);
+
+            if (chunkPayload.Length != 0)
+            {
+                var payloadBuffer = new byte[decodedPayload.Count + chunkPayload.Length];
+                decodedPayload.CopyTo(payloadBuffer);
+                chunkPayload.CopyTo(payloadBuffer, decodedPayload.Count);
+                decodedPayload = payloadBuffer.ToList();
+            }
+            
+            if (chunkText != null && chunkText.Length != 0)
+            {
+                var textBuffer = new byte[decodedText.Count + chunkText.Length];
+                decodedText.CopyTo(textBuffer);
+                chunkText.CopyTo(textBuffer, decodedText.Count);
+                decodedText = textBuffer.ToList();
+            }
+        } while (magic != Magic.END_CHUNK);
+        var _decodedPayload = version == VERSION
+            ? decodedPayload.ToArray()
+            : Base64.Decode(Converter.BytesToHex(decodedPayload.ToArray()));
+        var _decodedText = decodedText.Count != 0 ? decodedText.ToArray() : null;
+        return (_decodedPayload, _decodedText);
     }
     
     // Returns:
@@ -198,35 +314,43 @@ public class MetalServiceV2
     // - txs: List of metadata transaction (InnerTransaction for aggregate tx)
     // - additive: Actual additive that been used during encoding. You should store this for verifying the metal.
     public async Task<(ulong Key, List<IBaseTransaction> Txs, short? Additive)> CreateForgeTxs(
+        MetadataType type,
         PublicKey sourcePubKey,
         PublicKey targetPubKey,
         byte[] payload,
+        string? targetId = null,
         short? additive = null,
+        string? text = null,
         Metadata[]? metadataPool = null)
     {
+        if(type is MetadataType.Mosaic or MetadataType.Namespace && targetId == null) throw new ArgumentNullException(nameof(targetId), "targetId is required for mosaic or namespace metadata");
         additive ??= DEFAULT_ADDITIVE;
         var lookupTable = CreateMetadataLookupTable(metadataPool);
         var txs = new List<IBaseTransaction>();
         var keys = new List<string>();
-        var chunks = (int) Math.Ceiling((double) payload.Length / CHUNK_PAYLOAD_MAX_SIZE);
-        var nextKey = GenerateChecksum(payload);
+        var ( combinedPayload, textChunks ) = CombinePayloadWithText(payload, text);
+        var chunks = (int) Math.Ceiling((double) combinedPayload.Length / CHUNK_PAYLOAD_MAX_SIZE);
+        var nextKey = GenerateChecksum(combinedPayload);
 
         for (var i = chunks - 1; i >= 0; i--)
         {
             var magic = i == chunks - 1 ? Magic.END_CHUNK : Magic.CHUNK;
-            var chunkBytes = payload.Skip(i * CHUNK_PAYLOAD_MAX_SIZE).Take(CHUNK_PAYLOAD_MAX_SIZE).ToArray();
+            var chunkBytes = combinedPayload.Skip(i * CHUNK_PAYLOAD_MAX_SIZE).Take(CHUNK_PAYLOAD_MAX_SIZE).ToArray();
 
-            var (value, key) = PackChunkBytes(magic, VERSION, (short) additive, nextKey, chunkBytes);
+            var (value, key) = PackChunkBytes(magic, VERSION, (short) additive, nextKey, chunkBytes, i < textChunks);
 
             if (keys.Contains(key.ToString("X16")))
             {
                 Console.WriteLine($"Warning: Scoped key \"{key.ToString("X16")}\" has been conflicted. Trying another additive.");
                 // Retry with another additive via recursive call
                 return await CreateForgeTxs(
+                    type,
                     sourcePubKey,
                     targetPubKey,
                     payload,
+                    targetId,
                     GenerateRandomAdditive(),
+                    text,
                     metadataPool);
             }
 
@@ -234,11 +358,13 @@ public class MetalServiceV2
             if (!lookupTable.ContainsKey(key.ToString("X16")))
             {
                 txs.Add(SymbolService.CreateMetadataTx(
+                    type,
                     sourcePubKey,
                     targetPubKey,
                     key,
                     value,
-                    (ushort)value.Length));
+                    (ushort)value.Length,
+                    targetId != null ? ulong.Parse(targetId, NumberStyles.HexNumber) : null));
             }
 
             keys.Add(key.ToString("X16"));
@@ -291,6 +417,7 @@ public class MetalServiceV2
 
             var valueBytes = Converter.HexToBytes(metadata.metadataEntry.value);
             txs.Add(SymbolService.CreateMetadataTx(
+                type,
                 sourcePubKey,
                 targetPubKey,
                 ulong.Parse(metadata.metadataEntry.scopedMetadataKey, NumberStyles.HexNumber),
@@ -298,8 +425,8 @@ public class MetalServiceV2
                 (ushort)(scrappedValueBytes.Length - valueBytes.Length)
             ));
 
-            magic = chunk.Value.magic;
-            currentKeyHex = chunk.Value.nextKey.ToString("X16");
+            magic = chunk.Magic;
+            currentKeyHex = chunk.NextKey.ToString("X16");
         } while (magic != Magic.END_CHUNK);
         return txs;
     }
@@ -311,6 +438,7 @@ public class MetalServiceV2
         MosaicId targetId,
         byte[] payload,
         short? additive = null,
+        string? text = null,
         Metadata[]? metadataPool = null
     )
     {
@@ -325,26 +453,28 @@ public class MetalServiceV2
                     sourceAddress,
                     targetAddress))).ToArray()
         );
-        var scrappedValueBytes = Encoding.UTF8.GetBytes("");
+        var scrappedValueBytes = Array.Empty<byte>();
+        var ( combinedPayload, textChunks ) = CombinePayloadWithText(payload, text);
         var payloadBase64Bytes = Encoding.UTF8.GetBytes(Convert.ToBase64String(payload));
-        var chunks = (int) Math.Ceiling(payloadBase64Bytes.Length / (double) CHUNK_PAYLOAD_MAX_SIZE);
+        var chunks = (int) Math.Ceiling(combinedPayload.Length / (double) CHUNK_PAYLOAD_MAX_SIZE);
         var txs = new List<IBaseTransaction>();
-        var nextKey = GenerateChecksum(payload);
+        var nextKey = GenerateChecksum(combinedPayload);
         
         for (var i = chunks - 1; i >= 0; i--)
         {
             var magic = i == chunks - 1 ? Magic.END_CHUNK : Magic.CHUNK;
             var chunkBytes = payloadBase64Bytes.Skip(i * CHUNK_PAYLOAD_MAX_SIZE).Take(CHUNK_PAYLOAD_MAX_SIZE).ToArray();
-            var packedChunk = PackChunkBytes(magic, VERSION, (short)additive, nextKey, chunkBytes);
+            var packedChunk = PackChunkBytes(magic, VERSION, (short)additive, nextKey, chunkBytes, i < textChunks);
             var key = packedChunk.Key;
 
-            lookupTable.TryGetValue(key.ToString("X26"), out var onChainMetadata);
+            lookupTable.TryGetValue(key.ToString("X16"), out var onChainMetadata);
             if (onChainMetadata != null)
             {
                 // Only on-chain data to be announced.
-                var valueBytes = Encoding.UTF8.GetBytes(onChainMetadata.metadataEntry.value);
+                var valueBytes = Converter.HexToBytes(onChainMetadata.metadataEntry.value);
                 var xorValue = Converter.Xor(valueBytes, scrappedValueBytes);
                 var metadataTx = SymbolService.CreateMetadataTx(
+                    type,
                     sourcePubKey,
                     targetPubKey,
                     key,
@@ -372,26 +502,42 @@ public class MetalServiceV2
             (await SymbolService.SearchAccountMetadata(new AccountMetadataCriteria(source, target))).ToArray()
         );
         var collisions = new List<ulong>();
-
-        var metadataTxTypes = new [] {
-            typeof(AccountMetadataTransactionV1),
-        };
-
+        
         foreach (var tx in txs)
         {
-            if (!metadataTxTypes.Contains(tx.GetType()))
+            switch (tx.Type.Value)
             {
-                continue;
-            }
-            var metadataTx = tx as AccountMetadataTransactionV1;
-            var keyHex = metadataTx?.ScopedMetadataKey.ToString("X16");
-            if (keyHex != null && lookupTable.ContainsKey(keyHex))
-            {
-                Console.WriteLine($"{keyHex}: Already exists on the chain.");
-                if (metadataTx != null) collisions.Add(metadataTx.ScopedMetadataKey);
+                case 16708:
+                    var accountMetadataTx = tx as AccountMetadataTransactionV1;
+                    var accountMetadataKeyHex = accountMetadataTx?.ScopedMetadataKey.ToString("X16");
+                    if (accountMetadataKeyHex != null && lookupTable.ContainsKey(accountMetadataKeyHex))
+                    {
+                        Console.WriteLine($"{accountMetadataKeyHex}: Already exists on the chain.");
+                        if (accountMetadataTx != null) collisions.Add(accountMetadataTx.ScopedMetadataKey);
+                    }
+                    break;
+                case 16964:
+                    var mosaicMetadataTx = tx as MosaicMetadataTransactionV1;
+                    var mosaicKeyHex = mosaicMetadataTx?.ScopedMetadataKey.ToString("X16");
+                    if (mosaicKeyHex != null && lookupTable.ContainsKey(mosaicKeyHex))
+                    {
+                        Console.WriteLine($"{mosaicKeyHex}: Already exists on the chain.");
+                        if (mosaicMetadataTx != null) collisions.Add(mosaicMetadataTx.ScopedMetadataKey);
+                    }
+                    break;
+                case 17220:
+                    var namespaceMetadataTx = tx as MosaicMetadataTransactionV1;
+                    var namespaceKeyHex = namespaceMetadataTx?.ScopedMetadataKey.ToString("X16");
+                    if (namespaceKeyHex != null && lookupTable.ContainsKey(namespaceKeyHex))
+                    {
+                        Console.WriteLine($"{namespaceKeyHex}: Already exists on the chain.");
+                        if (namespaceMetadataTx != null) collisions.Add(namespaceMetadataTx.ScopedMetadataKey);
+                    }
+                    break;
+                default:
+                    continue;
             }
         }
-
         return collisions;
     }
     
@@ -402,8 +548,7 @@ public class MetalServiceV2
         string key,
         List<Metadata>? metadataPool = null)
     {
-        var payloadBase64 = Base64.Encode(payload);
-        var decodedBase64 = Decode(
+        var (decodedPayload, _) = Decode(
             key,
             metadataPool ??
             await SymbolService.SearchAccountMetadata(new AccountMetadataCriteria(sourceAddress, targetAddress)
@@ -413,11 +558,11 @@ public class MetalServiceV2
             }));
 
         var mismatches = 0;
-        var maxLength = Math.Max(payloadBase64.Length, decodedBase64.Length);
+        var maxLength = Math.Max(payload.Length, decodedPayload.Length);
 
         for (var i = 0; i < maxLength; i++)
         {
-            if (payloadBase64[i] != decodedBase64.ElementAtOrDefault(i))
+            if (payload[i] != decodedPayload[i])
             {
                 mismatches++;
             }
@@ -430,7 +575,7 @@ public class MetalServiceV2
         return await SymbolService.GetMetadataByHash(RestoreMetadataHash(metalId));
     }
 
-    public async Task<byte[]> Fetch(
+    public async Task<(byte[] DecodedPayload, byte[]? DecodedText)> Fetch(
         string source,
         string target,
         string key,
@@ -445,31 +590,14 @@ public class MetalServiceV2
     //   - sourceAddress: Metadata source address
     //   - targetAddress: Metadata target address
     //   - key: Metadata key
-    public async Task<(byte[] Payload, string SourceAddress, string TargetAddress, string Key)> FetchByMetalId(string metalId, bool isKey = false) {
+    public async Task<(byte[] Payload, byte[]? text, string SourceAddress, string TargetAddress, string Key)> FetchByMetalId(string metalId, bool isKey = false) {
         var metadataEntry = await GetFirstChunk(metalId);
-        var payload = await Fetch(
+        var (payload, text)= await Fetch(
             metadataEntry.sourceAddress,
             metadataEntry.targetAddress,
             metadataEntry.scopedMetadataKey,
             isKey
         );
-        return (payload, metadataEntry.sourceAddress, metadataEntry.targetAddress, metadataEntry.scopedMetadataKey);
-    }
-    
-    private static string To36(int value)
-    {
-        const string base36 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-        var result = "";
-
-        while (value > 0) {
-            var remainder = value % 36;
-            result = base36[remainder] + result;
-            value /= 36;
-        }
-
-        if (result == "") {
-            result = "0";
-        }
-        return result;
+        return (payload, text, metadataEntry.sourceAddress, metadataEntry.targetAddress, metadataEntry.scopedMetadataKey);
     }
 }

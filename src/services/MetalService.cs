@@ -307,6 +307,7 @@ internal class MetalService
     // - txs: List of metadata transaction (InnerTransaction for aggregate tx)
     // - additive: Actual additive that been used during encoding. You should store this for verifying the metal.
     public async Task<(ulong Key, List<IBaseTransaction> Txs, byte[]? Additive)> CreateForgeTxs(
+        MetadataType type,
         PublicKey sourcePubKey,
         PublicKey targetPubKey,
         byte[] payload,
@@ -333,6 +334,7 @@ internal class MetalService
                 Console.WriteLine($"Warning: Scoped key \"{key.ToString("X16")}\" has been conflicted. Trying another additive.");
                 // Retry with another additive via recursive call
                 return await CreateForgeTxs(
+                    type,
                     sourcePubKey,
                     targetPubKey,
                     payload,
@@ -344,6 +346,7 @@ internal class MetalService
             if (!lookupTable.ContainsKey(key.ToString("X16")))
             {
                 txs.Add(SymbolService.CreateMetadataTx(
+                    type,
                     sourcePubKey,
                     targetPubKey,
                     key,
@@ -402,6 +405,7 @@ internal class MetalService
 
             var valueBytes = Converter.HexToBytes(metadata.metadataEntry.value);
             txs.Add(SymbolService.CreateMetadataTx(
+                type,
                 sourcePubKey,
                 targetPubKey,
                 ulong.Parse(metadata.metadataEntry.scopedMetadataKey, NumberStyles.HexNumber),
@@ -456,6 +460,7 @@ internal class MetalService
                 var valueBytes = Encoding.UTF8.GetBytes(onChainMetadata.metadataEntry.value);
                 var xorValue = Converter.Xor(valueBytes, scrappedValueBytes);
                 var metadataTx = SymbolService.CreateMetadataTx(
+                    type,
                     sourcePubKey,
                     targetPubKey,
                     key,

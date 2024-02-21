@@ -54,7 +54,7 @@ public class SymbolService
         hasher.BlockUpdate(add2, 0, add2.Length);
         var keyBytes = BitConverter.GetBytes(key);
         hasher.BlockUpdate(keyBytes, 0, keyBytes.Length);
-        var targetIdBytes = Converter.HexToBytes(targetId ?? "0000000000000000");
+        var targetIdBytes = Converter.HexToBytes(targetId ?? "0000000000000000").Reverse().ToArray();
         hasher.BlockUpdate(targetIdBytes, 0, targetIdBytes.Length);
         var typeByte = new byte[1] {(byte)type};
         hasher.BlockUpdate(typeByte, 0, typeByte.Length);
@@ -85,25 +85,53 @@ public class SymbolService
     }
     
     public IBaseTransaction CreateMetadataTx(
+        MetadataType type,
         PublicKey sourcePubKey,
         PublicKey targetPubKey,
         ulong key,
         byte[] value,
-        ushort valueSizeDelta
+        ushort valueSizeDelta,
+        ulong? targetId = null
     )
     {
         if (Network == null) throw new NullReferenceException("network is null");
         var add = Network.Facade.Network.PublicKeyToAddress(targetPubKey.bytes);
-        return new EmbeddedAccountMetadataTransactionV1
-        {
-            Network = Network.NetworkTypeForTx,
-            SignerPublicKey = sourcePubKey,
-            TargetAddress = new UnresolvedAddress(add.bytes),
-            ScopedMetadataKey = key,
-            ValueSizeDelta = valueSizeDelta,
-            Value = value
-        };
 
+        switch (type)
+        {
+            case MetadataType.Mosaic:
+                return new EmbeddedMosaicMetadataTransactionV1
+                {
+                    Network = Network.NetworkTypeForTx,
+                    SignerPublicKey = sourcePubKey,
+                    TargetAddress = new UnresolvedAddress(add.bytes),
+                    TargetMosaicId = new UnresolvedMosaicId(targetId),
+                    ScopedMetadataKey = key,
+                    ValueSizeDelta = valueSizeDelta,
+                    Value = value
+                };
+            case MetadataType.Namespace:
+                return new EmbeddedNamespaceMetadataTransactionV1
+                {
+                    Network = Network.NetworkTypeForTx,
+                    SignerPublicKey = sourcePubKey,
+                    TargetAddress = new UnresolvedAddress(add.bytes),
+                    TargetNamespaceId = new NamespaceId(targetId),
+                    ScopedMetadataKey = key,
+                    ValueSizeDelta = valueSizeDelta,
+                    Value = value
+                };
+            default:
+                return new EmbeddedAccountMetadataTransactionV1
+                {
+                    Network = Network.NetworkTypeForTx,
+                    SignerPublicKey = sourcePubKey,
+                    TargetAddress = new UnresolvedAddress(add.bytes),
+                    ScopedMetadataKey = key,
+                    ValueSizeDelta = valueSizeDelta,
+                    Value = value
+                };
+        }
     }
 
     private AggregateCompleteTransactionV2 ComposeAggregateCompleteTx(
