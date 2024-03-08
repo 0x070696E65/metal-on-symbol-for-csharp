@@ -380,6 +380,7 @@ public class MetalServiceV2
         PublicKey sourcePubKey,
         PublicKey targetPubKey,
         ulong key,
+        string? targetId = null,
         List<Metadata>? metadataPool = null
     )
     {
@@ -422,7 +423,8 @@ public class MetalServiceV2
                 targetPubKey,
                 ulong.Parse(metadata.metadataEntry.scopedMetadataKey, NumberStyles.HexNumber),
                 Converter.Xor(valueBytes, scrappedValueBytes),
-                (ushort)(scrappedValueBytes.Length - valueBytes.Length)
+                (ushort)(scrappedValueBytes.Length - valueBytes.Length),
+                targetId != null ? ulong.Parse(targetId, NumberStyles.HexNumber) : null
             ));
 
             magic = chunk.Magic;
@@ -431,12 +433,12 @@ public class MetalServiceV2
         return txs;
     }
 
-    public async Task<IEnumerable<IBaseTransaction>> CreateDestroyTxs(
+    public async Task<List<IBaseTransaction>> CreateDestroyTxs(
         MetadataType type,
         PublicKey sourcePubKey,
         PublicKey targetPubKey,
-        MosaicId targetId,
         byte[] payload,
+        string? targetId = null,
         short? additive = null,
         string? text = null,
         Metadata[]? metadataPool = null
@@ -455,7 +457,6 @@ public class MetalServiceV2
         );
         var scrappedValueBytes = Array.Empty<byte>();
         var ( combinedPayload, textChunks ) = CombinePayloadWithText(payload, text);
-        var payloadBase64Bytes = Encoding.UTF8.GetBytes(Convert.ToBase64String(payload));
         var chunks = (int) Math.Ceiling(combinedPayload.Length / (double) CHUNK_PAYLOAD_MAX_SIZE);
         var txs = new List<IBaseTransaction>();
         var nextKey = GenerateChecksum(combinedPayload);
@@ -463,7 +464,7 @@ public class MetalServiceV2
         for (var i = chunks - 1; i >= 0; i--)
         {
             var magic = i == chunks - 1 ? Magic.END_CHUNK : Magic.CHUNK;
-            var chunkBytes = payloadBase64Bytes.Skip(i * CHUNK_PAYLOAD_MAX_SIZE).Take(CHUNK_PAYLOAD_MAX_SIZE).ToArray();
+            var chunkBytes = combinedPayload.Skip(i * CHUNK_PAYLOAD_MAX_SIZE).Take(CHUNK_PAYLOAD_MAX_SIZE).ToArray();
             var packedChunk = PackChunkBytes(magic, VERSION, (short)additive, nextKey, chunkBytes, i < textChunks);
             var key = packedChunk.Key;
 
@@ -479,7 +480,8 @@ public class MetalServiceV2
                     targetPubKey,
                     key,
                     xorValue,
-                    (ushort)(scrappedValueBytes.Length - valueBytes.Length)
+                    (ushort)(scrappedValueBytes.Length - valueBytes.Length),
+                    targetId != null ? ulong.Parse(targetId, NumberStyles.HexNumber) : null
                 );
                 txs.Add(metadataTx);
             }
@@ -487,7 +489,8 @@ public class MetalServiceV2
             nextKey = key;
         }
 
-        return txs.AsEnumerable().Reverse();
+        txs.Reverse();
+        return txs;
     }
 
     public async Task<List<ulong>> CheckCollision(

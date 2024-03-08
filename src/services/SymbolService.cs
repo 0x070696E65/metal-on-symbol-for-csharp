@@ -299,8 +299,8 @@ public class SymbolService
         var metadataPool = new List<Metadata>();
         while (true)
         {
-            var sourceAddress = Converter.AddressToString(Converter.HexToBytes(criteria.SourceAddress));
-            var targetAddress = Converter.AddressToString(Converter.HexToBytes(criteria.TargetAddress));
+            var sourceAddress = criteria.SourceAddress;
+            var targetAddress = criteria.TargetAddress;
             var url = $"{Config.NodeUrl}/metadata?sourceAddress={sourceAddress}&targetAddress={targetAddress}&pageNumber={count}";
             var json = await HttpRequestMethod(url);
             var root = JsonConvert.DeserializeObject<Root>(json);
